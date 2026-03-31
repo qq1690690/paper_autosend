@@ -32,9 +32,16 @@ KEYWORD_GROUPS_2 = [
 ]
 OUTPUT_FILE_2 = "articles_group2.xlsx"
 
-MAX_RESULTS = 50      # Max results per source (20–50)
+MAX_RESULTS   = 50    # Max results per source (20–50)
 MONTHS_BACK_1 = 1     # Group 1: last N months
 MONTHS_BACK_2 = 12    # Group 2: last N months (past 1 year)
+
+# PubMed retry settings
+PUBMED_MAX_RETRIES = 3
+PUBMED_RETRY_DELAY = 5  # seconds between retries
+
+# Google Scholar: max consecutive errors before giving up
+SCHOLAR_MAX_ERRORS = 3
 
 
 # ── STEP 2: Build query string from groups ────────────────
@@ -73,29 +80,53 @@ def preview_query(groups, label=""):
     return query
 
 
-# ── STEP 3: Search PubMed ─────────────────────────────────
+# ── STEP 3: Search PubMed (with retry) ───────────────────
+
+def _requests_get_with_retry(url, params, timeout=15):
+    """
+    🔧 修正風險3：加入 retry 機制，網路不穩時自動重試，避免 job 直接失敗。
+    """
+    for attempt in range(1, PUBMED_MAX_RETRIES + 1):
+        try:
+            resp = requests.get(url, params=params, timeout=timeout)
+            resp.raise_for_status()
+            return resp
+        except requests.RequestException as e:
+            if attempt < PUBMED_MAX_RETRIES:
+                print(f" ⚠️ Request failed (attempt {attempt}/{PUBMED_MAX_RETRIES}): {e}")
+                print(f"    Retrying in {PUBMED_RETRY_DELAY}s...")
+                time.sleep(PUBMED_RETRY_DELAY)
+            else:
+                print(f" ❌ All {PUBMED_MAX_RETRIES} attempts failed: {e}")
+                raise
+
 
 def search_pubmed(query, max_results=50, months_back=1):
     print("\n🔍 Searching PubMed...")
     results = []
 
-    end_date = datetime.datetime.now()
+    end_date   = datetime.datetime.now()
     start_date = end_date - datetime.timedelta(days=30 * months_back)
     mindate = start_date.strftime("%Y/%m/%d")
     maxdate = end_date.strftime("%Y/%m/%d")
 
     search_url = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi"
     search_params = {
-        "db": "pubmed",
-        "term": query,
-        "retmax": max_results,
-        "mindate": mindate,
-        "maxdate": maxdate,
+        "db":       "pubmed",
+        "term":     query,
+        "retmax":   max_results,
+        "mindate":  mindate,
+        "maxdate":  maxdate,
         "datetype": "pdat",
-        "retmode": "json",
+        "retmode":  "json",
     }
-    resp = requests.get(search_url, params=search_params, timeout=15)
-    ids = resp.json().get("esearchresult", {}).get("idlist", [])
+
+    try:
+        resp = _requests_get_with_retry(search_url, search_params)
+        ids = resp.json().get("esearchresult", {}).get("idlist", [])
+    except Exception as e:
+        print(f" ❌ PubMed search failed, skipping: {e}")
+        return results
 
     if not ids:
         print(" ⚠️ No PubMed results found for this date range.")
@@ -109,13 +140,17 @@ def search_pubmed(query, max_results=50, months_back=1):
     for i in range(0, len(ids), 20):
         batch = ids[i:i+20]
         fetch_params = {
-            "db": "pubmed",
-            "id": ",".join(batch),
+            "db":      "pubmed",
+            "id":      ",".join(batch),
             "retmode": "xml",
             "rettype": "abstract",
         }
-        r = requests.get(fetch_url, params=fetch_params, timeout=15)
-        root = ET.fromstring(r.text)
+        try:
+            r = _requests_get_with_retry(fetch_url, fetch_params)
+            root = ET.fromstring(r.text)
+        except Exception as e:
+            print(f" ❌ Failed to fetch batch {i//20 + 1}, skipping: {e}")
+            continue
 
         for article in root.findall(".//PubmedArticle"):
             try:
@@ -127,11 +162,11 @@ def search_pubmed(query, max_results=50, months_back=1):
                 journal = article.findtext(".//Journal/Title") or \
                           article.findtext(".//MedlineTA") or ""
                 results.append({
-                    "Source": "PubMed",
-                    "Title": title.strip(),
-                    "Abstract": abstract.strip(),
+                    "Source":           "PubMed",
+                    "Title":            title.strip(),
+                    "Abstract":         abstract.strip(),
                     "Publication Year": year.strip(),
-                    "Journal/Source": journal.strip(),
+                    "Journal/Source":   journal.strip(),
                 })
             except Exception as e:
                 print(f" ⚠️ Skipped one article: {e}")
@@ -143,9 +178,18 @@ def search_pubmed(query, max_results=50, months_back=1):
 # ── STEP 4: Search Google Scholar ────────────────────────
 
 def search_google_scholar(query, max_results=50, months_back=1):
+    """
+    🔧 修正風險1：偵測到 CAPTCHA / 封鎖時立即 break，不讓 job 卡住。
+    🔧 修正風險2：改用 cutoff_year 精確比對，排除早於搜尋區間的文章。
+    """
     print("🔍 Searching Google Scholar...")
     results = []
-    cutoff_year = (datetime.datetime.now() - datetime.timedelta(days=30 * months_back)).year
+
+    # 🔧 修正風險2：計算完整 cutoff 日期，取出年份做精確比對
+    cutoff_date = datetime.datetime.now() - datetime.timedelta(days=30 * months_back)
+    cutoff_year = cutoff_date.year
+
+    consecutive_errors = 0
 
     try:
         search_query = scholarly.search_pubs(query)
@@ -154,34 +198,59 @@ def search_google_scholar(query, max_results=50, months_back=1):
             try:
                 pub = next(search_query)
                 bib = pub.get("bib", {})
-                year = str(bib.get("pub_year", ""))
+                year_str = str(bib.get("pub_year", ""))
 
-                if year and int(year) < cutoff_year:
-                    continue
+                # 🔧 修正風險2：年份比對，排除早於 cutoff 年的文章
+                if year_str:
+                    try:
+                        if int(year_str) < cutoff_year:
+                            continue
+                    except ValueError:
+                        pass  # 年份格式異常時保留該筆
 
-                title = bib.get("title", "")
+                title    = bib.get("title", "")
                 abstract = bib.get("abstract", "")
-                journal = bib.get("venue", "") or bib.get("journal", "")
+                journal  = bib.get("venue", "") or bib.get("journal", "")
 
                 results.append({
-                    "Source": "Google Scholar",
-                    "Title": title.strip(),
-                    "Abstract": abstract.strip(),
-                    "Publication Year": year.strip(),
-                    "Journal/Source": journal.strip(),
+                    "Source":           "Google Scholar",
+                    "Title":            title.strip(),
+                    "Abstract":         abstract.strip(),
+                    "Publication Year": year_str.strip(),
+                    "Journal/Source":   journal.strip(),
                 })
                 count += 1
+                consecutive_errors = 0  # 成功後重設錯誤計數
                 time.sleep(1.2)
 
             except StopIteration:
                 break
             except Exception as e:
-                print(f" ⚠️ Skipped one result: {e}")
+                consecutive_errors += 1
+                err_msg = str(e).lower()
+
+                # 🔧 修正風險1：偵測 CAPTCHA / 封鎖關鍵字，立即放棄
+                if any(kw in err_msg for kw in ["captcha", "blocked", "429", "forbidden", "robot"]):
+                    print(f" ❌ Google Scholar blocked (CAPTCHA/rate-limit): {e}")
+                    print("    Stopping Scholar search to avoid job hang-up.")
+                    break
+
+                print(f" ⚠️ Skipped one result ({consecutive_errors}/{SCHOLAR_MAX_ERRORS}): {e}")
+
+                # 🔧 修正風險1：連續錯誤達上限也放棄，避免無限重試
+                if consecutive_errors >= SCHOLAR_MAX_ERRORS:
+                    print(f" ❌ Too many consecutive errors ({SCHOLAR_MAX_ERRORS}), stopping Scholar search.")
+                    break
+
                 time.sleep(2)
 
     except Exception as e:
-        print(f" ❌ Google Scholar error: {e}")
-        print(" Tip: If you see a CAPTCHA error, try again after a few minutes.")
+        err_msg = str(e).lower()
+        if any(kw in err_msg for kw in ["captcha", "blocked", "429", "forbidden", "robot"]):
+            print(f" ❌ Google Scholar blocked at startup: {e}")
+        else:
+            print(f" ❌ Google Scholar error: {e}")
+        print(" ℹ️  Continuing with PubMed results only.")
 
     print(f" ✅ Retrieved {len(results)} results from Google Scholar.")
     return results
