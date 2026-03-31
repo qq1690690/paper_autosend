@@ -234,7 +234,7 @@ def run_search(
     output_file,
     label="",
     max_results=MAX_RESULTS,
-    months_back=MONTHS_BACK,
+    months_back=1,
 ):
     query = preview_query(keyword_groups, label=label)
     print(f"\n 📅 Date range : Last {months_back} month(s)")
