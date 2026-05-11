@@ -15,8 +15,8 @@ from scholarly import scholarly
 
 # --- Search Group 1 ---
 KEYWORD_GROUPS_1 = [
-    {"keywords": ["infectious disease", "infection control"], "logic": "OR"},
-    {"keywords": ["machine learning", "generative AI"], "logic": "OR"},
+    {"keywords": ["infectious disease", "infection control", "infection prevention and control"], "logic": "OR"},
+    {"keywords": ["machine learning", "generative AI", "Large language, model"], "logic": "OR"},
 ]
 OUTPUT_FILE_1 = "articles_group1.xlsx"
 
@@ -27,7 +27,7 @@ OUTPUT_FILE_1 = "articles_group1.xlsx"
 # Note: y_5[Filter] (past 5 years) is handled by MONTHS_BACK for PubMed date range;
 #       Google Scholar uses keywords only without PubMed-specific filters.
 KEYWORD_GROUPS_2 = [
-    {"keywords": ["crhvkp", "carbapenem resistant hypervirulent klebsiella pneumoniae"], "logic": "OR"},
+    {"keywords": ["crhvkp", "carbapenem resistant hypervirulent klebsiella pneumoniae", "hypervirulent klebsiella pneumoniae"], "logic": "OR"},
     {"keywords": ["clinical outcome"], "logic": "AND"},
 ]
 OUTPUT_FILE_2 = "articles_group2.xlsx"
