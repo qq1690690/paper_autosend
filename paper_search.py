@@ -15,7 +15,7 @@ from scholarly import scholarly
 
 # --- Search Group 1 ---
 KEYWORD_GROUPS_1 = [
-    {"keywords": ["infectious disease", "infection control", "infection prevention and control"], "logic": "OR"},
+    {"keywords": ["infectious disease", "infection control", "infection prevention and control","antimicrobial stewardship"], "logic": "OR"},
     {"keywords": ["machine learning", "generative AI", "Large language, model"], "logic": "OR"},
 ]
 OUTPUT_FILE_1 = "articles_group1.xlsx"
