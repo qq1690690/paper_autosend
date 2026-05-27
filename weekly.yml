@@ -1,14 +1,12 @@
 name: Weekly Paper Search
-
 on:
   schedule:
-    # 每週一、四 09:00 UTC（可換你想要的時間）
-    - cron: "0 9 * * 1,4"
-  workflow_dispatch:  # 讓你可以手動按下去跑一次
+    - cron: "0 1 * * 1,4"   # UTC+8 早上 09:00 = UTC 01:00
+  workflow_dispatch:
+
 jobs:
   run-weekly-search:
     runs-on: ubuntu-latest
-
     steps:
       - name: Checkout repo
         uses: actions/checkout@v4
@@ -25,8 +23,10 @@ jobs:
 
       - name: Run weekly job
         env:
-          SENDER_EMAIL: ${{ secrets.SENDER_EMAIL }}
+          SENDER_EMAIL:        ${{ secrets.SENDER_EMAIL }}
           SENDER_APP_PASSWORD: ${{ secrets.SENDER_APP_PASSWORD }}
-          RECEIVER_EMAIL: ${{ secrets.RECEIVER_EMAIL }}
+          RECEIVER_EMAIL:      ${{ secrets.RECEIVER_EMAIL }}
+          GDRIVE_CREDENTIALS:  ${{ secrets.GDRIVE_CREDENTIALS }}
+          GDRIVE_FOLDER_ID:    ${{ secrets.GDRIVE_FOLDER_ID }}
         run: |
           python run_job.py
