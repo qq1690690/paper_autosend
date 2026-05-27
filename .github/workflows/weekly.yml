@@ -2,20 +2,20 @@ name: Weekly Paper Search
 
 on:
   schedule:
-    # 每週一、四 09:00 UTC（可改時間）
-    - cron: "0 9 * * 1,4"
-  workflow_dispatch:
+    - cron: "0 1 * * 1,4"   # UTC+8 週一、四 早上 09:00
+  workflow_dispatch:          # 手動觸發
 
 jobs:
   run-weekly-search:
     runs-on: ubuntu-latest
+    timeout-minutes: 10       # 最多跑 10 分鐘，超時直接失敗
 
     steps:
       - name: Checkout repo
-        uses: actions/checkout@v4
+        uses: actions/checkout@v4.2.2        # ← Node.js 24 支援版本
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v5.6.0    # ← Node.js 24 支援版本
         with:
           python-version: "3.11"
 
@@ -26,8 +26,12 @@ jobs:
 
       - name: Run weekly job
         env:
-          SENDER_EMAIL: ${{ secrets.SENDER_EMAIL }}
-          SENDER_APP_PASSWORD: ${{ secrets.SENDER_APP_PASSWORD }}
-          RECEIVER_EMAIL: ${{ secrets.RECEIVER_EMAIL }}
+          SENDER_EMAIL:           ${{ secrets.SENDER_EMAIL }}
+          SENDER_APP_PASSWORD:    ${{ secrets.SENDER_APP_PASSWORD }}
+          RECEIVER_EMAIL:         ${{ secrets.RECEIVER_EMAIL }}
+          GDRIVE_CREDENTIALS:     ${{ secrets.GDRIVE_CREDENTIALS }}
+          GSHEET_SPREADSHEET_ID:  ${{ secrets.GSHEET_SPREADSHEET_ID }}
+          SKIP_SCHOLAR: "true"
         run: |
           python run_job.py
+
