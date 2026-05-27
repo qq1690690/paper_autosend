@@ -8,6 +8,8 @@ on:
 jobs:
   run-weekly-search:
     runs-on: ubuntu-latest
+    timeout-minutes: 15       # 最多跑 15 分鐘，避免卡住
+
     steps:
       - name: Checkout repo
         uses: actions/checkout@v4
@@ -29,5 +31,6 @@ jobs:
           RECEIVER_EMAIL:         ${{ secrets.RECEIVER_EMAIL }}
           GDRIVE_CREDENTIALS:     ${{ secrets.GDRIVE_CREDENTIALS }}
           GSHEET_SPREADSHEET_ID:  ${{ secrets.GSHEET_SPREADSHEET_ID }}
+          SKIP_SCHOLAR: "true"    # Google Scholar 在 CI 容易被封鎖，改用本機執行
         run: |
           python run_job.py
