@@ -1,5 +1,31 @@
 # run_job.py
 import os
+import json
+
+# ── 診斷：確認環境變數 ──
+print("=" * 50)
+print("🔍 環境變數診斷")
+
+creds = os.environ.get("GDRIVE_CREDENTIALS", "")
+sheet_id = os.environ.get("GSHEET_SPREADSHEET_ID", "")
+
+print(f"  GDRIVE_CREDENTIALS   長度：{len(creds)} 字元")
+print(f"  GSHEET_SPREADSHEET_ID：[{sheet_id}]")
+print(f"  SENDER_EMAIL         ：{'✅' if os.environ.get('SENDER_EMAIL') else '❌'}")
+print(f"  SKIP_SCHOLAR         ：{os.environ.get('SKIP_SCHOLAR', '未設定')}")
+
+if creds:
+    try:
+        parsed = json.loads(creds)
+        print(f"  JSON 解析             ：✅ 成功")
+        print(f"  client_email         ：{parsed.get('client_email', '找不到')}")
+    except json.JSONDecodeError as e:
+        print(f"  JSON 解析             ：❌ 失敗 — {e}")
+else:
+    print(f"  GDRIVE_CREDENTIALS   ：❌ 完全空白")
+
+print("=" * 50)
+
 from paper_search import (
     run_search,
     KEYWORD_GROUPS_1, OUTPUT_FILE_1, MONTHS_BACK_1, SHEET_TAB_1,
@@ -52,7 +78,7 @@ def main():
         print("\n❌ No articles found in any group, skip sending email.")
         return
 
-    # 3. Send email with Excel attachments + Sheets link
+    # 3. Send email
     sender_email        = os.environ["SENDER_EMAIL"]
     sender_app_password = os.environ["SENDER_APP_PASSWORD"]
     receiver_email      = os.environ["RECEIVER_EMAIL"]
@@ -70,11 +96,15 @@ def main():
         body=(
             "附上本次自動整理的最新論文檔案：\n\n"
             f"{summary_lines}\n\n"
-            f"📊 Google Sheets（請在這裡標記 keep / skip）：\n{sheet_url}\n\n"
+            f"📊 Google Sheets：\n{sheet_url}\n\n"
             "標記完成後，Apps Script 會自動下載 PDF 並寫入 Notion。"
         ),
     )
     print("📧 Email sent successfully.")
+
+
+if __name__ == "__main__":
+    main()
 
 
 if __name__ == "__main__":
