@@ -2,6 +2,7 @@
 # ============================================================
 # 📚 Article Search Tool — Google Scholar + PubMed
 # Two independent keyword groups → two separate Excel files
+# + Google Drive upload support
 # ============================================================
 
 import time
@@ -15,17 +16,12 @@ from scholarly import scholarly
 
 # --- Search Group 1 ---
 KEYWORD_GROUPS_1 = [
-    {"keywords": ["infectious disease", "infection control", "infection prevention and control","antimicrobial stewardship"], "logic": "OR"},
-    {"keywords": ["machine learning", "generative AI", "Large language, model"], "logic": "OR"},
+    {"keywords": ["infectious disease", "infection control", "infection prevention and control", "antimicrobial stewardship"], "logic": "OR"},
+    {"keywords": ["machine learning", "generative AI", "Large language model"], "logic": "OR"},
 ]
 OUTPUT_FILE_1 = "articles_group1.xlsx"
 
 # --- Search Group 2 ---
-# Original PubMed query:
-#   ((crhvkp AND (y_5[Filter])) OR (carbapenem resistant hypervirulent klebsiella pneumoniae AND (y_5[Filter])))
-#   AND (clinical outcome AND (y_5[Filter]))
-# Note: y_5[Filter] (past 5 years) is handled by MONTHS_BACK for PubMed date range;
-#       Google Scholar uses keywords only without PubMed-specific filters.
 KEYWORD_GROUPS_2 = [
     {"keywords": ["crhvkp", "carbapenem resistant hypervirulent klebsiella pneumoniae", "hypervirulent klebsiella pneumoniae"], "logic": "OR"},
     {"keywords": ["clinical outcome"], "logic": "AND"},
@@ -47,15 +43,10 @@ SCHOLAR_MAX_ERRORS = 3
 # ── STEP 2: Build query string from groups ────────────────
 
 def build_query(groups):
-    """
-    Joins keywords within each group by their specified logic (AND/OR),
-    then joins all groups together with AND.
-    """
     parts = []
     for group in groups:
         keywords = [kw.strip() for kw in group["keywords"] if kw.strip()]
         logic = group.get("logic", "AND").upper()
-
         if not keywords:
             continue
         if len(keywords) == 1:
@@ -63,7 +54,6 @@ def build_query(groups):
         else:
             joined = f" {logic} ".join(keywords)
             parts.append(f"({joined})")
-
     return " AND ".join(parts)
 
 
@@ -83,9 +73,6 @@ def preview_query(groups, label=""):
 # ── STEP 3: Search PubMed (with retry) ───────────────────
 
 def _requests_get_with_retry(url, params, timeout=15):
-    """
-    🔧 修正風險3：加入 retry 機制，網路不穩時自動重試，避免 job 直接失敗。
-    """
     for attempt in range(1, PUBMED_MAX_RETRIES + 1):
         try:
             resp = requests.get(url, params=params, timeout=timeout)
@@ -161,12 +148,24 @@ def search_pubmed(query, max_results=50, months_back=1):
                        article.findtext(".//PubDate/MedlineDate", "")[:4]
                 journal = article.findtext(".//Journal/Title") or \
                           article.findtext(".//MedlineTA") or ""
+
+                # ── NEW: extract DOI and PMID ──
+                pmid = article.findtext(".//PMID") or ""
+                doi_elem = article.find(".//ArticleId[@IdType='doi']")
+                doi = doi_elem.text.strip() if doi_elem is not None else ""
+
                 results.append({
+                    "Status":           "unread",
                     "Source":           "PubMed",
                     "Title":            title.strip(),
                     "Abstract":         abstract.strip(),
                     "Publication Year": year.strip(),
                     "Journal/Source":   journal.strip(),
+                    "DOI":              doi,
+                    "PMID":             pmid.strip(),
+                    "PubMed URL":       f"https://pubmed.ncbi.nlm.nih.gov/{pmid.strip()}/" if pmid else "",
+                    "My Comment":       "",
+                    "Drive link":       "",
                 })
             except Exception as e:
                 print(f" ⚠️ Skipped one article: {e}")
@@ -178,17 +177,11 @@ def search_pubmed(query, max_results=50, months_back=1):
 # ── STEP 4: Search Google Scholar ────────────────────────
 
 def search_google_scholar(query, max_results=50, months_back=1):
-    """
-    🔧 修正風險1：偵測到 CAPTCHA / 封鎖時立即 break，不讓 job 卡住。
-    🔧 修正風險2：改用 cutoff_year 精確比對，排除早於搜尋區間的文章。
-    """
     print("🔍 Searching Google Scholar...")
     results = []
 
-    # 🔧 修正風險2：計算完整 cutoff 日期，取出年份做精確比對
     cutoff_date = datetime.datetime.now() - datetime.timedelta(days=30 * months_back)
     cutoff_year = cutoff_date.year
-
     consecutive_errors = 0
 
     try:
@@ -200,27 +193,35 @@ def search_google_scholar(query, max_results=50, months_back=1):
                 bib = pub.get("bib", {})
                 year_str = str(bib.get("pub_year", ""))
 
-                # 🔧 修正風險2：年份比對，排除早於 cutoff 年的文章
                 if year_str:
                     try:
                         if int(year_str) < cutoff_year:
                             continue
                     except ValueError:
-                        pass  # 年份格式異常時保留該筆
+                        pass
 
                 title    = bib.get("title", "")
                 abstract = bib.get("abstract", "")
                 journal  = bib.get("venue", "") or bib.get("journal", "")
 
+                # ── NEW: extract DOI from Scholar ──
+                doi = bib.get("doi", "") or pub.get("externalIds", {}).get("DOI", "") or ""
+
                 results.append({
+                    "Status":           "unread",
                     "Source":           "Google Scholar",
                     "Title":            title.strip(),
                     "Abstract":         abstract.strip(),
                     "Publication Year": year_str.strip(),
                     "Journal/Source":   journal.strip(),
+                    "DOI":              doi.strip(),
+                    "PMID":             "",
+                    "PubMed URL":       "",
+                    "My Comment":       "",
+                    "Drive link":       "",
                 })
                 count += 1
-                consecutive_errors = 0  # 成功後重設錯誤計數
+                consecutive_errors = 0
                 time.sleep(1.2)
 
             except StopIteration:
@@ -228,20 +229,14 @@ def search_google_scholar(query, max_results=50, months_back=1):
             except Exception as e:
                 consecutive_errors += 1
                 err_msg = str(e).lower()
-
-                # 🔧 修正風險1：偵測 CAPTCHA / 封鎖關鍵字，立即放棄
                 if any(kw in err_msg for kw in ["captcha", "blocked", "429", "forbidden", "robot"]):
                     print(f" ❌ Google Scholar blocked (CAPTCHA/rate-limit): {e}")
                     print("    Stopping Scholar search to avoid job hang-up.")
                     break
-
                 print(f" ⚠️ Skipped one result ({consecutive_errors}/{SCHOLAR_MAX_ERRORS}): {e}")
-
-                # 🔧 修正風險1：連續錯誤達上限也放棄，避免無限重試
                 if consecutive_errors >= SCHOLAR_MAX_ERRORS:
                     print(f" ❌ Too many consecutive errors ({SCHOLAR_MAX_ERRORS}), stopping Scholar search.")
                     break
-
                 time.sleep(2)
 
     except Exception as e:
@@ -267,6 +262,7 @@ def save_to_excel(df, output_file, query, months_back):
     wb = load_workbook(output_file)
     ws = wb.active
 
+    # Header styling
     header_fill = PatternFill("solid", fgColor="4472C4")
     header_font = Font(bold=True, color="FFFFFF")
     for cell in ws[1]:
@@ -274,13 +270,39 @@ def save_to_excel(df, output_file, query, months_back):
         cell.font = header_font
         cell.alignment = Alignment(horizontal="center", vertical="center")
 
-    col_widths = {"A": 15, "B": 50, "C": 80, "D": 18, "E": 35}
+    # Column widths
+    col_widths = {
+        "A": 12,   # Status
+        "B": 15,   # Source
+        "C": 55,   # Title
+        "D": 80,   # Abstract
+        "E": 12,   # Publication Year
+        "F": 35,   # Journal/Source
+        "G": 35,   # DOI
+        "H": 14,   # PMID
+        "I": 42,   # PubMed URL
+        "J": 22,   # My Comment
+        "K": 42,   # Drive link
+    }
     for col, width in col_widths.items():
         ws.column_dimensions[col].width = width
 
-    for row in ws.iter_rows(min_row=2, min_col=3, max_col=3):
+    # Wrap abstract column
+    for row in ws.iter_rows(min_row=2, min_col=4, max_col=4):
         for cell in row:
             cell.alignment = Alignment(wrap_text=True, vertical="top")
+
+    # ── NEW: Status column colour coding ──
+    status_colors = {
+        "keep":   "C6EFCE",   # green
+        "skip":   "FFCCCC",   # red
+        "unread": "FFFFFF",   # white
+    }
+    for row in ws.iter_rows(min_row=2, max_row=ws.max_row, min_col=1, max_col=1):
+        for cell in row:
+            color = status_colors.get(str(cell.value).strip().lower(), "FFFFFF")
+            cell.fill = PatternFill("solid", fgColor=color)
+            cell.alignment = Alignment(horizontal="center", vertical="center")
 
     # Search Info sheet
     ws_note = wb.create_sheet("Search Info")
@@ -292,11 +314,78 @@ def save_to_excel(df, output_file, query, months_back):
     ws_note["B3"] = datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
     ws_note["A4"] = "Total Articles"
     ws_note["B4"] = len(df)
+    ws_note["A5"] = "Instructions"
+    ws_note["B5"] = "Change Status to 'keep' or 'skip', then upload this file back to Google Drive as 'review.csv'"
 
     wb.save(output_file)
 
 
-# ── STEP 6: Run a single search group ────────────────────
+# ── STEP 6: Upload to Google Drive ───────────────────────
+
+def upload_to_drive(file_path):
+    """
+    Upload Excel file to Google Drive using Service Account credentials.
+    Requires env vars:
+      GDRIVE_CREDENTIALS — full Service Account JSON content
+      GDRIVE_FOLDER_ID   — target Drive folder ID
+    """
+    import os
+    import json
+    from pathlib import Path
+
+    creds_json = os.environ.get("GDRIVE_CREDENTIALS")
+    folder_id  = os.environ.get("GDRIVE_FOLDER_ID")
+
+    if not creds_json or not folder_id:
+        print("⚠️  GDRIVE_CREDENTIALS or GDRIVE_FOLDER_ID not set, skipping Drive upload.")
+        return None
+
+    try:
+        from googleapiclient.discovery import build
+        from googleapiclient.http import MediaFileUpload
+        from google.oauth2 import service_account
+    except ImportError:
+        print("❌ google-api-python-client not installed. Run: pip install google-api-python-client google-auth")
+        return None
+
+    creds = service_account.Credentials.from_service_account_info(
+        json.loads(creds_json),
+        scopes=["https://www.googleapis.com/auth/drive"]
+    )
+    service = build("drive", "v3", credentials=creds)
+
+    file_name = Path(file_path).name
+
+    # Delete existing file with same name to avoid duplicates
+    existing = service.files().list(
+        q=f"name='{file_name}' and '{folder_id}' in parents and trashed=false",
+        fields="files(id, name)"
+    ).execute().get("files", [])
+    for f in existing:
+        service.files().delete(fileId=f["id"]).execute()
+        print(f"  🗑️  Deleted old file: {f['name']}")
+
+    # Upload new file
+    file_metadata = {
+        "name":    file_name,
+        "parents": [folder_id]
+    }
+    media = MediaFileUpload(
+        file_path,
+        mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
+    uploaded = service.files().create(
+        body=file_metadata,
+        media_body=media,
+        fields="id,webViewLink"
+    ).execute()
+
+    link = uploaded.get("webViewLink", "")
+    print(f"  ✅ Uploaded to Drive: {link}")
+    return link
+
+
+# ── STEP 7: Run a single search group ────────────────────
 
 def run_search(
     keyword_groups,
@@ -309,19 +398,20 @@ def run_search(
     print(f"\n 📅 Date range : Last {months_back} month(s)")
     print(f" 📦 Max results : {max_results} per source\n")
 
-    pubmed_results = search_pubmed(query, max_results, months_back)
+    pubmed_results  = search_pubmed(query, max_results, months_back)
     scholar_results = search_google_scholar(query, max_results, months_back)
-    all_results = pubmed_results + scholar_results
+    all_results     = pubmed_results + scholar_results
 
     if not all_results:
         print(f"\n❌ No articles found for {label}. Try different keywords or a wider date range.")
         return None
 
     df = pd.DataFrame(all_results, columns=[
-        "Source", "Title", "Abstract", "Publication Year", "Journal/Source"
+        "Status", "Source", "Title", "Abstract", "Publication Year",
+        "Journal/Source", "DOI", "PMID", "PubMed URL", "My Comment", "Drive link"
     ])
 
-    # Remove duplicates
+    # Remove duplicates by title
     before = len(df)
     df.drop_duplicates(subset="Title", keep="first", inplace=True)
     df.reset_index(drop=True, inplace=True)
@@ -338,7 +428,7 @@ def run_search(
     return df
 
 
-# ── STEP 7: Run both groups ───────────────────────────────
+# ── STEP 8: Run both groups ───────────────────────────────
 
 if __name__ == "__main__":
     print("\n" + "🟦" * 30)
