@@ -10,7 +10,7 @@ import time
 import datetime
 import requests
 import pandas as pd
-from scholarly import scholarly
+# scholarly 改為延遲載入，避免 CI import 時卡住
 
 
 # ── STEP 1: 🔑 CONFIG ─────────────────────────────────────
@@ -178,6 +178,13 @@ def search_pubmed(query, max_results=50, months_back=1):
 # ── STEP 4: Search Google Scholar (local only) ────────────
 
 def search_google_scholar(query, max_results=50, months_back=1):
+    # ── 延遲載入：只在本機執行時才 import，CI 不會碰到 ──
+    try:
+        from scholarly import scholarly as _scholarly
+    except ImportError:
+        print(" ❌ scholarly not installed, skipping Google Scholar.")
+        return []
+
     print("🔍 Searching Google Scholar...")
     results = []
 
@@ -185,7 +192,7 @@ def search_google_scholar(query, max_results=50, months_back=1):
     consecutive_errors = 0
 
     try:
-        search_query = scholarly.search_pubs(query)
+        search_query = _scholarly.search_pubs(query)
         count = 0
         while count < max_results:
             try:
@@ -289,15 +296,6 @@ def save_to_excel(df, output_file, query, months_back):
 # ── STEP 6: Append to Google Sheets ──────────────────────
 
 def append_to_sheets(df, sheet_tab, run_date=None):
-    """
-    Append new rows to a Google Sheets tab.
-    - Writes header only if sheet is empty
-    - Skips rows where Title already exists (deduplication)
-    - Adds a 'Batch date' column to track which run added each row
-    Requires env vars:
-      GDRIVE_CREDENTIALS     — Service Account JSON
-      GSHEET_SPREADSHEET_ID  — Spreadsheet ID from URL
-    """
     import json
 
     creds_json     = os.environ.get("GDRIVE_CREDENTIALS")
@@ -324,11 +322,11 @@ def append_to_sheets(df, sheet_tab, run_date=None):
     if run_date is None:
         run_date = datetime.datetime.now().strftime("%Y-%m-%d")
 
-    # Read existing titles for deduplication
+    # Read existing titles for deduplication (column C = Title)
     try:
         result = sheet.values().get(
             spreadsheetId=spreadsheet_id,
-            range=f"{sheet_tab}!C:C"   # Title is column C
+            range=f"{sheet_tab}!C:C"
         ).execute()
         existing_values = result.get("values", [])
     except Exception:
@@ -410,7 +408,7 @@ def run_search(
     # ── PubMed (always runs) ──
     pubmed_results = search_pubmed(query, max_results, months_back)
 
-    # ── Google Scholar (skip in CI via env var) ──
+    # ── Google Scholar (skip in CI via env var or if not installed) ──
     skip_scholar = os.environ.get("SKIP_SCHOLAR", "false").lower() == "true"
     if skip_scholar:
         print("ℹ️  Google Scholar skipped (SKIP_SCHOLAR=true)")
