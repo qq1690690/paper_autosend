@@ -1,8 +1,9 @@
 name: Weekly Paper Search
+
 on:
   schedule:
-    - cron: "0 1 * * 1,4"   # UTC+8 早上 09:00 = UTC 01:00
-  workflow_dispatch:
+    - cron: "0 1 * * 1,4"   # UTC+8 週一、四 早上 09:00
+  workflow_dispatch:          # 手動觸發
 
 jobs:
   run-weekly-search:
@@ -23,10 +24,10 @@ jobs:
 
       - name: Run weekly job
         env:
-          SENDER_EMAIL:        ${{ secrets.SENDER_EMAIL }}
-          SENDER_APP_PASSWORD: ${{ secrets.SENDER_APP_PASSWORD }}
-          RECEIVER_EMAIL:      ${{ secrets.RECEIVER_EMAIL }}
-          GDRIVE_CREDENTIALS:  ${{ secrets.GDRIVE_CREDENTIALS }}
-          GDRIVE_FOLDER_ID:    ${{ secrets.GDRIVE_FOLDER_ID }}
+          SENDER_EMAIL:           ${{ secrets.SENDER_EMAIL }}
+          SENDER_APP_PASSWORD:    ${{ secrets.SENDER_APP_PASSWORD }}
+          RECEIVER_EMAIL:         ${{ secrets.RECEIVER_EMAIL }}
+          GDRIVE_CREDENTIALS:     ${{ secrets.GDRIVE_CREDENTIALS }}
+          GSHEET_SPREADSHEET_ID:  ${{ secrets.GSHEET_SPREADSHEET_ID }}
         run: |
           python run_job.py
