@@ -175,7 +175,7 @@ def search_pubmed(query, max_results=50, months_back=1):
     return results
 
 
-# ── STEP 4: Search Google Scholar ────────────────────────
+# ── STEP 4: Search Google Scholar (local only) ────────────
 
 def search_google_scholar(query, max_results=50, months_back=1):
     print("🔍 Searching Google Scholar...")
@@ -328,7 +328,7 @@ def append_to_sheets(df, sheet_tab, run_date=None):
     try:
         result = sheet.values().get(
             spreadsheetId=spreadsheet_id,
-            range=f"{sheet_tab}!A:A"
+            range=f"{sheet_tab}!C:C"   # Title is column C
         ).execute()
         existing_values = result.get("values", [])
     except Exception:
@@ -343,7 +343,16 @@ def append_to_sheets(df, sheet_tab, run_date=None):
     headers = ["Batch date"] + COLUMNS
 
     # Write header if sheet is empty
-    if not existing_values:
+    try:
+        first_cell = sheet.values().get(
+            spreadsheetId=spreadsheet_id,
+            range=f"{sheet_tab}!A1"
+        ).execute()
+        has_header = bool(first_cell.get("values"))
+    except Exception:
+        has_header = False
+
+    if not has_header:
         sheet.values().update(
             spreadsheetId=spreadsheet_id,
             range=f"{sheet_tab}!A1",
@@ -398,9 +407,18 @@ def run_search(
     print(f"\n 📅 Date range : Last {months_back} month(s)")
     print(f" 📦 Max results : {max_results} per source\n")
 
-    pubmed_results  = search_pubmed(query, max_results, months_back)
-    scholar_results = search_google_scholar(query, max_results, months_back)
-    all_results     = pubmed_results + scholar_results
+    # ── PubMed (always runs) ──
+    pubmed_results = search_pubmed(query, max_results, months_back)
+
+    # ── Google Scholar (skip in CI via env var) ──
+    skip_scholar = os.environ.get("SKIP_SCHOLAR", "false").lower() == "true"
+    if skip_scholar:
+        print("ℹ️  Google Scholar skipped (SKIP_SCHOLAR=true)")
+        scholar_results = []
+    else:
+        scholar_results = search_google_scholar(query, max_results, months_back)
+
+    all_results = pubmed_results + scholar_results
 
     if not all_results:
         print(f"\n❌ No articles found for {label}.")
