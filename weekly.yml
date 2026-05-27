@@ -12,10 +12,10 @@ jobs:
 
     steps:
       - name: Checkout repo
-        uses: actions/checkout@v4
+        uses: actions/checkout@v4.2.2        # ← Node.js 24 支援版本
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v5.6.0    # ← Node.js 24 支援版本
         with:
           python-version: "3.11"
 
@@ -31,6 +31,6 @@ jobs:
           RECEIVER_EMAIL:         ${{ secrets.RECEIVER_EMAIL }}
           GDRIVE_CREDENTIALS:     ${{ secrets.GDRIVE_CREDENTIALS }}
           GSHEET_SPREADSHEET_ID:  ${{ secrets.GSHEET_SPREADSHEET_ID }}
-          SKIP_SCHOLAR: "true"    # scholarly 在 CI 會卡住，本機執行時移除此行
+          SKIP_SCHOLAR: "true"
         run: |
           python run_job.py
