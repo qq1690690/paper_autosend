@@ -355,31 +355,23 @@ def search_google_scholar(query, max_results=100, months_back=1):
 
 def ai_prescreening(results, group_description, sheet_tab):
     """
-    用 Claude Haiku 對每篇 title + abstract 打分 0-2。
+    用 OpenAI GPT-4o-mini 對每篇 title + abstract 打分 0-2。
     0 = 明顯不相關（排除）
     1 = 可能相關（保留，給人工看）
     2 = 直接相關（保留，優先看）
 
-    需要環境變數 ANTHROPIC_API_KEY。
+    需要環境變數 OPENAI_API_KEY。
     若未設定則跳過，全部保留原始結果。
     """
-    api_key = os.environ.get("ANTHROPIC_API_KEY")
+    api_key = os.environ.get("OPENAI_API_KEY")
     if not api_key:
-        print(" ℹ️  ANTHROPIC_API_KEY 未設定，跳過 AI prescreening，保留全部結果。")
+        print(" ℹ️  OPENAI_API_KEY 未設定，跳過 AI prescreening，保留全部結果。")
         return results
 
-    try:
-        import anthropic
-    except ImportError:
-        print(" ⚠️ anthropic 套件未安裝，跳過 AI prescreening。")
-        print("    執行：pip install anthropic")
-        return results
+    print(f"\n🤖 AI prescreening（GPT-4o-mini）— {len(results)} 篇...")
 
-    client  = anthropic.Anthropic(api_key=api_key)
     kept    = []
     removed = 0
-
-    print(f"\n🤖 AI prescreening（Claude Haiku）— {len(results)} 篇...")
 
     for i, paper in enumerate(results, 1):
         title    = paper.get("Title", "")[:300]
@@ -402,17 +394,26 @@ Reply with ONLY valid JSON, no extra text:
 {{"score": 0, "reason": "one short sentence explaining the score"}}"""
 
         try:
-            response = client.messages.create(
-                model="claude-haiku-4-5-20251001",
-                max_tokens=120,
-                messages=[{"role": "user", "content": prompt}],
+            resp = requests.post(
+                "https://api.openai.com/v1/chat/completions",
+                headers={
+                    "Content-Type":  "application/json",
+                    "Authorization": f"Bearer {api_key}",
+                },
+                json={
+                    "model":       "gpt-4o-mini",
+                    "messages":    [{"role": "user", "content": prompt}],
+                    "temperature": 0.1,
+                    "max_tokens":  120,
+                },
+                timeout=20,
             )
-            raw    = response.content[0].text.strip()
+            resp.raise_for_status()
+            raw    = resp.json()["choices"][0]["message"]["content"].strip()
             result = json.loads(raw)
             score  = int(result.get("score", 1))
             reason = str(result.get("reason", ""))
         except Exception as e:
-            # 解析失敗 → 保留（預設分數 1）
             score  = 1
             reason = f"parse error: {e}"
 
@@ -424,15 +425,13 @@ Reply with ONLY valid JSON, no extra text:
         else:
             removed += 1
 
-        # 進度顯示（每 10 篇一次）
         if i % 10 == 0 or i == len(results):
             print(f"   {i}/{len(results)} screened — kept {len(kept)}, removed {removed}")
 
-        time.sleep(0.3)  # 避免 rate limit
+        time.sleep(0.3)
 
     print(f" ✅ AI prescreening 完成：{len(results)} → {len(kept)} 篇（移除 {removed} 篇不相關）")
     return kept
-
 
 # ── STEP 6: Save to Excel ─────────────────────────────────
 
