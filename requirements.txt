@@ -3,5 +3,4 @@ pandas
 openpyxl
 google-api-python-client
 google-auth
-anthropic>=0.81.0
 # scholarly — 只在本機使用，CI 環境不安裝（避免 import 卡住）
