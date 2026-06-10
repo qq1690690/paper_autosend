@@ -31,6 +31,7 @@ jobs:
           RECEIVER_EMAIL:         ${{ secrets.RECEIVER_EMAIL }}
           GDRIVE_CREDENTIALS:     ${{ secrets.GDRIVE_CREDENTIALS }}
           GSHEET_SPREADSHEET_ID:  ${{ secrets.GSHEET_SPREADSHEET_ID }}
+          ANTHROPIC_API_KEY:      ${{ secrets.ANTHROPIC_API_KEY }}
           SKIP_SCHOLAR: "true"
         run: |
           python run_job.py
