@@ -18,23 +18,91 @@ import pandas as pd
 
 # --- Search Group 1 ---
 KEYWORD_GROUPS_1 = [
-    {"keywords": ["infectious disease", "infection control", "infection prevention and control", "antimicrobial stewardship"], "logic": "OR"},
-    {"keywords": ["machine learning", "generative AI", "Large language model"], "logic": "OR"},
+    {
+        "keywords": [
+            "infectious disease",
+            "infection control",
+            "infection prevention and control",
+            "antimicrobial stewardship",
+            "antibiotic stewardship",
+            "hospital-acquired infection",
+            "nosocomial infection",
+            "HAI",
+            "sepsis",
+            "bacteremia",
+            "bloodstream infection",
+        ],
+        "logic": "OR",
+    },
+    {
+        "keywords": [
+            "machine learning",
+            "deep learning",
+            "neural network",
+            "artificial intelligence",
+            "generative AI",
+            "large language model",
+            "LLM",
+            "GPT",
+            "ChatGPT",
+            "foundation model",
+            "natural language processing",
+            "clinical decision support",
+            "predictive model",
+        ],
+        "logic": "OR",
+    },
 ]
 SHEET_TAB_1 = "Group1"
 
-# --- Search Group 2 ---
+# --- Search Group 2：CR-hvKP ---
 KEYWORD_GROUPS_2 = [
-    {"keywords": ["crhvkp", "carbapenem resistant hypervirulent klebsiella pneumoniae", "hypervirulent klebsiella pneumoniae"], "logic": "OR"},
-    {"keywords": ["clinical outcome"], "logic": "AND"},
+    {
+        "keywords": [
+            "crhvkp",
+            "CR-hvKp",
+            "CR-HvKP",
+            "carbapenem resistant hypervirulent klebsiella pneumoniae",
+            "carbapenem-resistant hypervirulent klebsiella",
+            "hypervirulent klebsiella pneumoniae",
+            "hvKP",
+            "hvKp",
+            "hypervirulent klebsiella",
+        ],
+        "logic": "OR",
+    },
+    {
+        "keywords": [
+            "clinical outcome",
+            "mortality",
+            "treatment",
+            "infection",
+            "bacteremia",
+            "liver abscess",
+        ],
+        "logic": "OR",
+    },
 ]
 SHEET_TAB_2 = "Group2"
 
-# Keep xlsx output for email attachment
+# --- Group descriptions（給 AI prescreening 用）---
+GROUP_DESCRIPTIONS = {
+    "Group1": (
+        "Infectious disease clinical research combined with AI or machine learning. "
+        "Relevant topics: sepsis prediction, antimicrobial stewardship AI tools, "
+        "LLM applications in infection management, HAI surveillance models."
+    ),
+    "Group2": (
+        "Carbapenem-resistant hypervirulent Klebsiella pneumoniae (CR-hvKP or crhvkp). "
+        "Relevant topics: clinical outcomes, treatment, mortality, virulence factors, "
+        "liver abscess, bacteremia caused by hypervirulent Klebsiella."
+    ),
+}
+
 OUTPUT_FILE_1 = "articles_group1.xlsx"
 OUTPUT_FILE_2 = "articles_group2.xlsx"
 
-MAX_RESULTS   = 50
+MAX_RESULTS   = 100   # v2：從 50 提高到 100
 MONTHS_BACK_1 = 1
 MONTHS_BACK_2 = 12
 
@@ -42,10 +110,12 @@ PUBMED_MAX_RETRIES = 3
 PUBMED_RETRY_DELAY = 5
 SCHOLAR_MAX_ERRORS = 3
 
-# Column order — shared across all functions
+# v2：加入 AI Score / AI Reason 欄位
 COLUMNS = [
     "Status", "Source", "Title", "Abstract", "Publication Year",
-    "Journal/Source", "DOI", "PMID", "PubMed URL", "My Comment", "Drive link"
+    "Journal/Source", "DOI", "PMID", "PubMed URL",
+    "AI Score", "AI Reason",
+    "My Comment", "Drive link",
 ]
 
 
@@ -251,7 +321,7 @@ def search_google_scholar(query, max_results=50, months_back=1):
 
 # ── STEP 5: AI Prescreening ───────────────────────────────
 
-def ai_prescreening(papers, api_key=None):
+def ai_prescreening(papers, group_description="", api_key=None):
     from openai import OpenAI
 
     if not api_key:
@@ -271,11 +341,13 @@ def ai_prescreening(papers, api_key=None):
             screened.append(paper)
             continue
 
+        context_line = f"Research area: {group_description}\n\n" if group_description else ""
         prompt = (
-            "You are an expert physician reviewer. Evaluate whether this paper is relevant and worth keeping.\n"
-            'Criteria for "keep": original research on AI/ML applied to infectious disease or infection control, with clear clinical relevance.\n'
-            'Criteria for "skip": review articles, letters, editorials, unrelated topics, or very low methodological quality.\n\n'
-            'Return ONLY a JSON object: {"decision": "keep" or "skip", "reason": "one sentence"}\n\n'
+            "You are an expert physician reviewer.\n"
+            f"{context_line}"
+            "Score this paper's relevance on a scale of 1-10, then give a one-sentence reason.\n"
+            "Scoring guide: 1-3 = off-topic or very low quality; 4-6 = borderline; 7-10 = clearly relevant original research.\n\n"
+            'Return ONLY a JSON object: {"score": <integer 1-10>, "reason": "<one sentence>"}\n\n'
             f"Title: {title}\n"
             f"Abstract: {abstract[:1000]}"
         )
@@ -289,19 +361,20 @@ def ai_prescreening(papers, api_key=None):
             raw = response.choices[0].message.content.strip()
             raw = raw.replace("```json", "").replace("```", "").strip()
             result = json.loads(raw)
-            decision = result.get("decision", "unread").lower()
-            if decision not in ("keep", "skip"):
-                decision = "unread"
-            paper = {**paper, "Status": decision}
-            print(f"  [{i+1}/{len(papers)}] {decision.upper()} — {title[:70]}")
+            score  = int(result.get("score", 0))
+            reason = result.get("reason", "")
+            paper  = {**paper, "AI Score": score, "AI Reason": reason}
+            print(f"  [{i+1}/{len(papers)}] score={score} — {title[:65]}")
         except Exception as e:
             print(f"  ⚠️ AI screening failed for paper {i+1}: {e}")
 
         screened.append(paper)
 
-    keeps = sum(1 for p in screened if p.get("Status") == "keep")
-    skips = sum(1 for p in screened if p.get("Status") == "skip")
-    print(f"\n🤖 AI Prescreening done: {keeps} keep, {skips} skip, {len(screened)-keeps-skips} unread")
+    scored = [p for p in screened if isinstance(p.get("AI Score"), int)]
+    if scored:
+        avg = sum(p["AI Score"] for p in scored) / len(scored)
+        high = sum(1 for p in scored if p["AI Score"] >= 7)
+        print(f"\n🤖 AI Prescreening done: {len(scored)} scored, avg={avg:.1f}, score≥7: {high}")
     return screened
 
 
@@ -324,7 +397,8 @@ def save_to_excel(df, output_file, query, months_back):
 
     col_widths = {
         "A": 12, "B": 15, "C": 55, "D": 80, "E": 12,
-        "F": 35, "G": 35, "H": 14, "I": 42, "J": 22, "K": 42,
+        "F": 35, "G": 35, "H": 14, "I": 42,
+        "J": 10, "K": 50, "L": 22, "M": 42,
     }
     for col, width in col_widths.items():
         ws.column_dimensions[col].width = width
@@ -455,6 +529,7 @@ def run_search(
     label="",
     max_results=MAX_RESULTS,
     months_back=1,
+    group_description="",
 ):
     query    = preview_query(keyword_groups, label=label)
     run_date = datetime.datetime.now().strftime("%Y-%m-%d")
@@ -480,7 +555,7 @@ def run_search(
         return None
 
     print(f"\n🤖 Running AI prescreening on {len(all_results)} articles...")
-    all_results = ai_prescreening(all_results)
+    all_results = ai_prescreening(all_results, group_description=group_description)
 
     df = pd.DataFrame(all_results, columns=COLUMNS)
 
@@ -515,6 +590,7 @@ if __name__ == "__main__":
         sheet_tab=SHEET_TAB_1,
         label="(Group 1)",
         months_back=MONTHS_BACK_1,
+        group_description=GROUP_DESCRIPTIONS["Group1"],
     )
 
     print("\n" + "🟩" * 30)
@@ -526,6 +602,7 @@ if __name__ == "__main__":
         sheet_tab=SHEET_TAB_2,
         label="(Group 2)",
         months_back=MONTHS_BACK_2,
+        group_description=GROUP_DESCRIPTIONS["Group2"],
     )
 
     print("\n🎉 All done!")

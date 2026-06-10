@@ -30,7 +30,7 @@ from paper_search import (
     run_search,
     KEYWORD_GROUPS_1, OUTPUT_FILE_1, MONTHS_BACK_1, SHEET_TAB_1,
     KEYWORD_GROUPS_2, OUTPUT_FILE_2, MONTHS_BACK_2, SHEET_TAB_2,
-    MAX_RESULTS,
+    MAX_RESULTS, GROUP_DESCRIPTIONS,
 )
 from email_sender import send_files_via_email
 
@@ -51,6 +51,7 @@ def main():
         label="(Group 1)",
         max_results=MAX_RESULTS,
         months_back=MONTHS_BACK_1,
+        group_description=GROUP_DESCRIPTIONS["Group1"],
     )
     if df1 is not None:
         results.append((OUTPUT_FILE_1, len(df1)))
@@ -68,6 +69,7 @@ def main():
         label="(Group 2)",
         max_results=MAX_RESULTS,
         months_back=MONTHS_BACK_2,
+        group_description=GROUP_DESCRIPTIONS["Group2"],
     )
     if df2 is not None:
         results.append((OUTPUT_FILE_2, len(df2)))
