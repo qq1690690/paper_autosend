@@ -6,6 +6,7 @@
 # ============================================================
 
 import os
+import json
 import time
 import datetime
 import requests
@@ -248,7 +249,63 @@ def search_google_scholar(query, max_results=50, months_back=1):
     return results
 
 
-# ── STEP 5: Save to Excel (for email attachment) ──────────
+# ── STEP 5: AI Prescreening ───────────────────────────────
+
+def ai_prescreening(papers, api_key=None):
+    from openai import OpenAI
+
+    if not api_key:
+        api_key = os.environ.get("OPENAI_API_KEY")
+    if not api_key:
+        print("⚠️  OPENAI_API_KEY not set, skipping AI prescreening.")
+        return papers
+
+    client = OpenAI(api_key=api_key)
+    screened = []
+
+    for i, paper in enumerate(papers):
+        title    = paper.get("Title", "")
+        abstract = paper.get("Abstract", "")
+
+        if not title:
+            screened.append(paper)
+            continue
+
+        prompt = (
+            "You are an expert physician reviewer. Evaluate whether this paper is relevant and worth keeping.\n"
+            'Criteria for "keep": original research on AI/ML applied to infectious disease or infection control, with clear clinical relevance.\n'
+            'Criteria for "skip": review articles, letters, editorials, unrelated topics, or very low methodological quality.\n\n'
+            'Return ONLY a JSON object: {"decision": "keep" or "skip", "reason": "one sentence"}\n\n'
+            f"Title: {title}\n"
+            f"Abstract: {abstract[:1000]}"
+        )
+
+        try:
+            response = client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0,
+            )
+            raw = response.choices[0].message.content.strip()
+            raw = raw.replace("```json", "").replace("```", "").strip()
+            result = json.loads(raw)
+            decision = result.get("decision", "unread").lower()
+            if decision not in ("keep", "skip"):
+                decision = "unread"
+            paper = {**paper, "Status": decision}
+            print(f"  [{i+1}/{len(papers)}] {decision.upper()} — {title[:70]}")
+        except Exception as e:
+            print(f"  ⚠️ AI screening failed for paper {i+1}: {e}")
+
+        screened.append(paper)
+
+    keeps = sum(1 for p in screened if p.get("Status") == "keep")
+    skips = sum(1 for p in screened if p.get("Status") == "skip")
+    print(f"\n🤖 AI Prescreening done: {keeps} keep, {skips} skip, {len(screened)-keeps-skips} unread")
+    return screened
+
+
+# ── STEP 6: Save to Excel (for email attachment) ──────────
 
 def save_to_excel(df, output_file, query, months_back):
     from openpyxl import load_workbook
@@ -421,6 +478,9 @@ def run_search(
     if not all_results:
         print(f"\n❌ No articles found for {label}.")
         return None
+
+    print(f"\n🤖 Running AI prescreening on {len(all_results)} articles...")
+    all_results = ai_prescreening(all_results)
 
     df = pd.DataFrame(all_results, columns=COLUMNS)
 

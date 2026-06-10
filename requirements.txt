@@ -1,6 +1,7 @@
 requests
 pandas
 openpyxl
+openai
 google-api-python-client
 google-auth
 # scholarly — 只在本機使用，CI 環境不安裝（避免 import 卡住）
